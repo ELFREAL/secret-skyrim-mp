@@ -11,7 +11,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const VERSION = "5.3.0";
+const VERSION = "5.3.0-lipsync-update-context";
 const CONFIG_PATH = path.join(process.cwd(), "gamemode-config.json");
 const UI_PATH = path.join(process.cwd(), "ui", "core-ui.html");
 
@@ -393,6 +393,15 @@ if (typeof mp === "undefined") {
       var lastHudAt = 0;
       var lipSequence = [0, 6, 11, 0, 5, 2]; // Aah, Eh, Oh, Aah, Eee, BMP
       var lipUsed = [0, 2, 5, 6, 11];
+      var lipBackendLogged = false;
+      var lipBackendErrorLogged = false;
+
+      // HttpClient callbacks run outside SkyrimPlatform's Papyrus OnUpdate
+      // native-call context. Never call callNative from those callbacks.
+      // They only publish the newest /talkers snapshot; facial work is drained
+      // from ctx.sp.on('update'), where vm/stackId are valid.
+      var pendingTalkersData = null;
+      var pendingTalkersReady = false;
 
       var alive = function() {
         try {
@@ -515,11 +524,37 @@ if (typeof mp === "undefined") {
         } catch (e) { return null; }
       };
 
+      var setMfgPhoneme = function(actor, phoneme, value) {
+        if (!actor || !ctx.sp || typeof ctx.sp.callNative !== 'function') return false;
+        try {
+          var result = ctx.sp.callNative(
+            'MfgConsoleFunc',
+            'SetPhonemeModifier',
+            null,
+            actor,
+            0,
+            Number(phoneme),
+            Math.round(Math.max(0, Math.min(100, Number(value) || 0)))
+          );
+          if (!lipBackendLogged) {
+            lipBackendLogged = true;
+            voiceLog('[VOICE] lipsync backend=MfgFixNG');
+          }
+          return result !== false;
+        } catch (e) {
+          if (!lipBackendErrorLogged) {
+            lipBackendErrorLogged = true;
+            voiceLog('[VOICE] lipsync MfgFix unavailable: ' + String(e && e.message ? e.message : e));
+          }
+          return false;
+        }
+      };
+
       var zeroLip = function(actor) {
         if (!actor) return;
-        try {
-          for (var i = 0; i < lipUsed.length; ++i) actor.setExpressionPhoneme(lipUsed[i], 0);
-        } catch (e) {}
+        for (var i = 0; i < lipUsed.length; ++i) {
+          try { setMfgPhoneme(actor, lipUsed[i], 0); } catch (e) {}
+        }
       };
 
       var resetLipKey = function(key) {
@@ -547,12 +582,24 @@ if (typeof mp === "undefined") {
           if (!state || state.actor !== actor) {
             if (state) zeroLip(state.actor);
             zeroLip(actor);
-            state = { actor: actor, phoneme: -1 };
+            state = { actor: actor, phoneme: -1, strength: -1 };
             lipStates[key] = state;
           }
-          if (state.phoneme !== phoneme && state.phoneme >= 0) actor.setExpressionPhoneme(state.phoneme, 0);
-          actor.setExpressionPhoneme(phoneme, strength);
-          state.phoneme = phoneme;
+
+          if (state.phoneme !== phoneme && state.phoneme >= 0) {
+            setMfgPhoneme(actor, state.phoneme, 0);
+          }
+
+          // Avoid flooding the Papyrus/UI task queue when neither mouth shape
+          // nor intensity meaningfully changed.
+          if (state.phoneme !== phoneme || Math.abs(state.strength - strength) >= 3) {
+            if (!setMfgPhoneme(actor, phoneme, strength)) {
+              resetLipKey(key);
+              return false;
+            }
+            state.phoneme = phoneme;
+            state.strength = strength;
+          }
           return true;
         } catch (e) {
           resetLipKey(key);
@@ -575,6 +622,19 @@ if (typeof mp === "undefined") {
           }
         } catch (e) {}
         peerActors = next;
+      };
+
+      var queueTalkers = function(data) {
+        pendingTalkersData = data;
+        pendingTalkersReady = true;
+      };
+
+      var drainTalkers = function() {
+        if (!pendingTalkersReady) return;
+        pendingTalkersReady = false;
+        var data = pendingTalkersData;
+        pendingTalkersData = null;
+        applyTalkers(data);
       };
 
       var applyTalkers = function(data) {
@@ -695,11 +755,11 @@ if (typeof mp === "undefined") {
         var ok = getJson('/talkers', function(data) {
           talkerPending = false;
           if (!alive()) return;
-          applyTalkers(data);
+          queueTalkers(data);
         });
         if (!ok) {
           talkerPending = false;
-          applyTalkers(null);
+          queueTalkers(null);
         }
       };
 
@@ -730,6 +790,7 @@ if (typeof mp === "undefined") {
           sendState(now);
           sendRoute(now);
           pollTalkers(now);
+          drainTalkers();
           if (pttPressed && ctx.sp.mpClientPlugin && !ctx.sp.mpClientPlugin.isConnected()) {
             sendPtt(false);
           }
@@ -1784,6 +1845,7 @@ if (typeof mp === "undefined") {
 
     appendMessage(actorId, "system",
       `[${config.serverName}] ${config.chatOpenKeyLabel} — открыть чат. /help — команды.`);
+
     trackTimeout(() => notify(actorId,
       `[${config.serverName}] Добро пожаловать, ${getRpName(actorId)}!`),
       Number(config.welcomeDelayMs) || 1200);
