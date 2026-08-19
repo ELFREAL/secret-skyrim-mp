@@ -1,5 +1,5 @@
 /**
- * SkyMP Core Gamemode v5.2
+ * SkyMP Core Gamemode v5.3
  * Target build: ELFREAL/skymp 2abd0a0391278335face3c13ff0e2cabf76344b0
  *
  * Stock skymp5-client.js compatible.
@@ -11,7 +11,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const VERSION = "5.2.1";
+const VERSION = "5.3.0";
 const CONFIG_PATH = path.join(process.cwd(), "gamemode-config.json");
 const UI_PATH = path.join(process.cwd(), "ui", "core-ui.html");
 
@@ -47,7 +47,11 @@ const DEFAULT_CONFIG = {
   "voicePollMs": 250,
   "voiceEnterRadius": 1190,
   "voiceLeaveRadius": 1330,
-  "voiceTransportClearMs": 700
+  "voiceTransportClearMs": 700,
+  "voiceTalkerPollMs": 90,
+  "voiceHudEnabled": true,
+  "voiceLipSyncEnabled": true,
+  "voiceLipMaxStrength": 72
 };
 
 function loadConfig() {
@@ -79,6 +83,10 @@ config.spamMaxMessages = posInt(config.spamMaxMessages, 6);
 config.adminPanelRefreshMs = posInt(config.adminPanelRefreshMs, 3000);
 config.voicePollMs = posInt(config.voicePollMs, 250);
 config.voiceTransportClearMs = posInt(config.voiceTransportClearMs, 700);
+config.voiceTalkerPollMs = posInt(config.voiceTalkerPollMs, 90);
+config.voiceHudEnabled = config.voiceHudEnabled !== false;
+config.voiceLipSyncEnabled = config.voiceLipSyncEnabled !== false;
+config.voiceLipMaxStrength = Math.max(0, Math.min(100, Number(config.voiceLipMaxStrength) || 72));
 config.voiceEnterRadius = Number(config.voiceEnterRadius) || 1190;
 config.voiceLeaveRadius = Math.max(Number(config.voiceLeaveRadius) || 1330, config.voiceEnterRadius);
 config.voiceEnabled = config.voiceEnabled !== false;
@@ -346,10 +354,9 @@ if (typeof mp === "undefined") {
 
   mp.makeEventSource("_coreRpUi", eventSource);
 
-  // Voice bridge is delivered by the gamemode itself through SkyMP's stock
-  // GamemodeEventSourceService. This intentionally avoids modifying
-  // skymp5-client.js or adding another SkyrimPlatform plugin, so voice cannot
-  // participate in plugin startup/load-order problems.
+  // Voice bridge, HUD and lipsync are delivered by the gamemode itself through
+  // SkyMP's stock GamemodeEventSourceService. The stock skymp5-client.js stays
+  // untouched: all game-side voice logic starts only after a SkyMP connection.
   const voiceEventSource = `
     try {
       var generation = String(Date.now()) + ':' + String(Math.random());
@@ -361,18 +368,31 @@ if (typeof mp === "undefined") {
       var unitsPerMeter = 70;
       var positionUpdateMs = 100;
       var routeRefreshMs = 2000;
+      var talkerPollMs = ${Number(config.voiceTalkerPollMs)};
+      var hudEnabled = ${config.voiceHudEnabled ? "true" : "false"};
+      var lipSyncEnabled = ${config.voiceLipSyncEnabled ? "true" : "false"};
+      var lipMaxStrength = ${Number(config.voiceLipMaxStrength)};
       var bridge = new ctx.sp.HttpClient('http://' + bridgeHost + ':' + bridgePort);
       var gameSettings = ctx.sp.settings && ctx.sp.settings['skymp5-client'];
       var profileId = Number(gameSettings && gameSettings.gameData && gameSettings.gameData.profileId);
       var lastStateAt = 0;
       var lastRouteAt = 0;
+      var lastTalkerAt = 0;
       var lastRouteNonce = null;
       var lastRouteText = null;
       var statePending = false;
       var routePending = false;
+      var talkerPending = false;
       var pttPressed = false;
       var bridgeOnline = false;
       var bridgeWarningShown = false;
+      var peerActors = Object.create(null);
+      var lipStates = Object.create(null);
+      var lipWarnings = Object.create(null);
+      var lastHudJson = '';
+      var lastHudAt = 0;
+      var lipSequence = [0, 6, 11, 0, 5, 2]; // Aah, Eh, Oh, Aah, Eee, BMP
+      var lipUsed = [0, 2, 5, 6, 11];
 
       var alive = function() {
         try {
@@ -401,6 +421,20 @@ if (typeof mp === "undefined") {
         }).join('\\n');
       };
 
+      var pushHud = function(state, force) {
+        if (!hudEnabled) return;
+        try {
+          var now = Date.now();
+          var json = JSON.stringify(state || {});
+          if (!force && json === lastHudJson && now - lastHudAt < 750) return;
+          lastHudJson = json;
+          lastHudAt = now;
+          ctx.sp.browser.executeJavaScript(
+            'window.coreVoiceSetState && window.coreVoiceSetState(' + json + ')'
+          );
+        } catch (e) {}
+      };
+
       var onBridgeResult = function(res) {
         try {
           var ok = res && Number(res.status) >= 200 && Number(res.status) < 300;
@@ -410,6 +444,7 @@ if (typeof mp === "undefined") {
             bridgeWarningShown = false;
           } else {
             bridgeOnline = false;
+            pushHud({ online: false, ptt: pttPressed, talking: false, level: 0 }, true);
             if (!bridgeWarningShown) {
               bridgeWarningShown = true;
               voiceLog('[VOICE] bridge HTTP error: ' + (res ? String(res.status) : 'no response'));
@@ -431,12 +466,159 @@ if (typeof mp === "undefined") {
           return true;
         } catch (e) {
           bridgeOnline = false;
+          pushHud({ online: false, ptt: pttPressed, talking: false, level: 0 }, true);
           if (!bridgeWarningShown) {
             bridgeWarningShown = true;
             voiceLog('[VOICE] bridge exception: ' + String(e && e.message ? e.message : e));
           }
           return false;
         }
+      };
+
+      var getJson = function(path, done) {
+        if (!alive()) return false;
+        try {
+          bridge.get(path, {}, function(res) {
+            onBridgeResult(res);
+            if (!res || Number(res.status) < 200 || Number(res.status) >= 300) {
+              try { done(null); } catch (ignore) {}
+              return;
+            }
+            try { done(JSON.parse(String(res.body || '{}'))); }
+            catch (e) { try { done(null); } catch (ignore) {} }
+          });
+          return true;
+        } catch (e) {
+          bridgeOnline = false;
+          try { done(null); } catch (ignore) {}
+          return false;
+        }
+      };
+
+      var getActorById = function(actorId) {
+        try {
+          actorId = Number(actorId);
+          if (!Number.isSafeInteger(actorId) || actorId <= 0) return null;
+          // Routes carry server-format form IDs. SkyMP exposes the official
+          // conversion helper on gamemode ctx; never assume client/server IDs
+          // are numerically identical.
+          var clientFormId = actorId;
+          if (typeof ctx.getFormIdInClientFormat === 'function') {
+            clientFormId = Number(ctx.getFormIdInClientFormat(actorId));
+          }
+          if (!Number.isSafeInteger(clientFormId) || clientFormId <= 0) return null;
+          var form = ctx.sp.Game.getFormEx(clientFormId);
+          var actor = ctx.sp.Actor.from(form);
+          if (!actor) return null;
+          try { if (!actor.is3DLoaded()) return null; } catch (e) {}
+          return actor;
+        } catch (e) { return null; }
+      };
+
+      var zeroLip = function(actor) {
+        if (!actor) return;
+        try {
+          for (var i = 0; i < lipUsed.length; ++i) actor.setExpressionPhoneme(lipUsed[i], 0);
+        } catch (e) {}
+      };
+
+      var resetLipKey = function(key) {
+        var state = lipStates[key];
+        if (!state) return;
+        try { zeroLip(state.actor); } catch (e) {}
+        delete lipStates[key];
+      };
+
+      var resetAllLips = function() {
+        try {
+          Object.keys(lipStates).forEach(function(key) { resetLipKey(key); });
+        } catch (e) {}
+      };
+
+      var animateLip = function(key, actor, level, now) {
+        if (!lipSyncEnabled || !actor) return false;
+        level = Math.max(0, Math.min(1, Number(level) || 0));
+        if (level <= 0) return false;
+        var phase = Math.floor(now / 105) % lipSequence.length;
+        var phoneme = lipSequence[phase];
+        var strength = Math.round(Math.min(lipMaxStrength, 18 + level * Math.max(0, lipMaxStrength - 18)));
+        var state = lipStates[key];
+        try {
+          if (!state || state.actor !== actor) {
+            if (state) zeroLip(state.actor);
+            zeroLip(actor);
+            state = { actor: actor, phoneme: -1 };
+            lipStates[key] = state;
+          }
+          if (state.phoneme !== phoneme && state.phoneme >= 0) actor.setExpressionPhoneme(state.phoneme, 0);
+          actor.setExpressionPhoneme(phoneme, strength);
+          state.phoneme = phoneme;
+          return true;
+        } catch (e) {
+          resetLipKey(key);
+          return false;
+        }
+      };
+
+      var setPeerActors = function(route) {
+        var next = Object.create(null);
+        try {
+          if (route && Array.isArray(route.peers)) {
+            route.peers.forEach(function(peer) {
+              if (!peer) return;
+              var pid = Number(peer.profileId);
+              var actorId = Number(peer.actorId);
+              if (Number.isSafeInteger(pid) && pid >= 0 && Number.isSafeInteger(actorId) && actorId > 0) {
+                next[String(pid)] = actorId;
+              }
+            });
+          }
+        } catch (e) {}
+        peerActors = next;
+      };
+
+      var applyTalkers = function(data) {
+        var now = Date.now();
+        if (!data || data.status !== 'ok') {
+          pushHud({ online: false, ptt: pttPressed, talking: false, level: 0 }, true);
+          resetAllLips();
+          return;
+        }
+
+        var localPtt = !!data.ptt;
+        var localTalking = !!data.localTalking;
+        var localLevel = Math.max(0, Math.min(1, Number(data.localLevel) || 0));
+        pushHud({ online: true, ptt: localPtt, talking: localTalking, level: localLevel }, false);
+
+        var keep = Object.create(null);
+        if (lipSyncEnabled && localTalking) {
+          try {
+            var localActor = ctx.sp.Game.getPlayer();
+            if (localActor && animateLip('local', localActor, localLevel, now)) keep.local = true;
+          } catch (e) {}
+        }
+
+        if (lipSyncEnabled && Array.isArray(data.talkers)) {
+          data.talkers.forEach(function(talker) {
+            if (!talker) return;
+            var pid = Number(talker.profileId);
+            var level = Math.max(0, Math.min(1, Number(talker.level) || 0));
+            var actorId = peerActors[String(pid)];
+            if (!Number.isSafeInteger(pid) || pid < 0 || !actorId || level <= 0) return;
+            var actor = getActorById(actorId);
+            var key = 'p:' + String(pid);
+            if (actor && animateLip(key, actor, level, now)) {
+              keep[key] = true;
+            } else if (!actor && !lipWarnings[key]) {
+              lipWarnings[key] = true;
+              voiceLog('[VOICE] lipsync actor unavailable: profileId=' + pid + ' actorId=' + actorId);
+            }
+          });
+        }
+
+        Object.keys(lipStates).forEach(function(key) {
+          if (!keep[key]) resetLipKey(key);
+        });
       };
 
       var sendState = function(now) {
@@ -479,6 +661,7 @@ if (typeof mp === "undefined") {
         if (!route || !Array.isArray(route.audible)) return;
         if (Number(route.profileId) !== profileId) return;
 
+        setPeerActors(route);
         var nonce = Number(route.nonce) || 0;
         var audible = route.audible
           .map(Number)
@@ -505,11 +688,28 @@ if (typeof mp === "undefined") {
         if (!ok) routePending = false;
       };
 
+      var pollTalkers = function(now) {
+        if (talkerPending || now - lastTalkerAt < talkerPollMs) return;
+        talkerPending = true;
+        lastTalkerAt = now;
+        var ok = getJson('/talkers', function(data) {
+          talkerPending = false;
+          if (!alive()) return;
+          applyTalkers(data);
+        });
+        if (!ok) {
+          talkerPending = false;
+          applyTalkers(null);
+        }
+      };
+
       var sendPtt = function(pressed) {
         pressed = !!pressed;
         if (pttPressed === pressed) return;
         pttPressed = pressed;
         voiceLog('[VOICE] PTT ' + (pressed ? 'DOWN' : 'UP'));
+        pushHud({ online: bridgeOnline, ptt: pressed, talking: false, level: 0 }, true);
+        if (!pressed) resetLipKey('local');
         post('/ptt', encodeLines({ pressed: pressed ? 1 : 0, ts: Date.now() }));
       };
 
@@ -529,13 +729,15 @@ if (typeof mp === "undefined") {
           var now = Date.now();
           sendState(now);
           sendRoute(now);
+          pollTalkers(now);
           if (pttPressed && ctx.sp.mpClientPlugin && !ctx.sp.mpClientPlugin.isConnected()) {
             sendPtt(false);
           }
         } catch (err) {}
       });
 
-      voiceLog('[VOICE] gamemode event source installed; PTT=N; profileId=' + profileId);
+      pushHud({ online: false, ptt: false, talking: false, level: 0 }, true);
+      voiceLog('[VOICE] gamemode event source installed; PTT=N; profileId=' + profileId + '; HUD=' + hudEnabled + '; lipsync=' + lipSyncEnabled);
     } catch (e) {
       try {
         ctx.sp.writeLogs('SecretSkyrimVoice', '[VOICE] event source init failed: ' + String(e && e.message ? e.message : e));
@@ -544,7 +746,6 @@ if (typeof mp === "undefined") {
   `;
 
   mp.makeEventSource("_coreVoice", voiceEventSource);
-
   function getProp(actorId, p, fallback) {
     const v = safe(`get ${p} ${actorHex(actorId)}`, () => mp.get(actorId, p), fallback);
     return v === undefined ? fallback : v;
@@ -772,10 +973,16 @@ if (typeof mp === "undefined") {
 
   function sendVoiceRoute(session, routeSet) {
     if (!session || !session.ready || !session.actorId) return false;
+    const audible = [...routeSet].sort((a, b) => a - b);
+    const peers = audible.map((profileId) => {
+      const peer = sessionsByProfile.get(profileId);
+      return peer && peer.actorId ? { profileId, actorId: peer.actorId } : null;
+    }).filter(Boolean);
     const payload = {
       nonce: voiceTransportNonce++,
       profileId: session.profileId,
-      audible: [...routeSet].sort((a, b) => a - b)
+      audible,
+      peers
     };
     if (!setProp(session.actorId, "gmVoiceTransport", payload)) return false;
     trackTimeout(() => {

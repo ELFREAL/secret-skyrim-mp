@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -30,6 +31,9 @@ namespace {
 constexpr unsigned short kBridgePort = 38471;
 constexpr long long kStateTimeoutMs = 1500;
 constexpr long long kRouteTimeoutMs = 5000;
+constexpr long long kTalkingHoldMs = 240;
+constexpr long long kTalkerForgetMs = 2000;
+constexpr float kSpeechFloor = 0.0035f;
 
 mumble_api_t g_api{};
 mumble_plugin_id_t g_pluginId = 0;
@@ -56,6 +60,18 @@ std::mutex g_routeMutex;
 std::unordered_set<int> g_allowedProfiles;
 std::shared_ptr<const std::unordered_set<mumble_userid_t>> g_allowedUsers =
   std::make_shared<const std::unordered_set<mumble_userid_t>>();
+std::shared_ptr<const std::unordered_map<mumble_userid_t, int>> g_profileByUser =
+  std::make_shared<const std::unordered_map<mumble_userid_t, int>>();
+
+struct TalkerState {
+  float level = 0.0f;
+  long long lastSpeechMs = 0;
+};
+
+std::mutex g_talkerMutex;
+std::unordered_map<int, TalkerState> g_remoteTalkers;
+std::atomic<float> g_localLevel{0.0f};
+std::atomic<long long> g_lastLocalSpeechMs{0};
 
 long long nowMs() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -105,6 +121,81 @@ bool parseProfileName(const char* name, int& profileId) {
   } catch (...) { return false; }
 }
 
+
+float displayLevelFromRms(double rms) {
+  const double shifted = std::max(0.0, rms - static_cast<double>(kSpeechFloor));
+  return static_cast<float>(std::clamp(shifted * 14.0, 0.0, 1.0));
+}
+
+float levelFromFloatPcm(const float* pcm, size_t total) {
+  if (!pcm || total == 0) return 0.0f;
+  double sum = 0.0;
+  for (size_t i = 0; i < total; ++i) {
+    const double v = static_cast<double>(pcm[i]);
+    sum += v * v;
+  }
+  return displayLevelFromRms(std::sqrt(sum / static_cast<double>(total)));
+}
+
+float levelFromInt16Pcm(const short* pcm, size_t total) {
+  if (!pcm || total == 0) return 0.0f;
+  double sum = 0.0;
+  for (size_t i = 0; i < total; ++i) {
+    const double v = static_cast<double>(pcm[i]) / 32768.0;
+    sum += v * v;
+  }
+  return displayLevelFromRms(std::sqrt(sum / static_cast<double>(total)));
+}
+
+void noteRemoteSpeech(mumble_userid_t userID, float level) {
+  if (level <= 0.0f) return;
+  const auto profiles = std::atomic_load(&g_profileByUser);
+  if (!profiles) return;
+  const auto it = profiles->find(userID);
+  if (it == profiles->end()) return;
+
+  const long long now = nowMs();
+  std::lock_guard<std::mutex> lock(g_talkerMutex);
+  auto& state = g_remoteTalkers[it->second];
+  const float previous = (now - state.lastSpeechMs <= kTalkingHoldMs) ? state.level : 0.0f;
+  state.level = std::max(level, previous * 0.72f);
+  state.lastSpeechMs = now;
+}
+
+std::string buildTalkersJson() {
+  const long long now = nowMs();
+  const bool ptt = g_ptt.load();
+  const bool localTalking = ptt && (now - g_lastLocalSpeechMs.load() <= kTalkingHoldMs);
+  const float localLevel = localTalking ? g_localLevel.load() : 0.0f;
+
+  std::ostringstream out;
+  out << "{\"status\":\"ok\",\"ptt\":" << (ptt ? "true" : "false")
+      << ",\"localTalking\":" << (localTalking ? "true" : "false")
+      << ",\"localLevel\":" << std::fixed << std::setprecision(3) << localLevel
+      << ",\"talkers\":[";
+
+  bool first = true;
+  {
+    std::lock_guard<std::mutex> lock(g_talkerMutex);
+    for (auto it = g_remoteTalkers.begin(); it != g_remoteTalkers.end();) {
+      const long long age = now - it->second.lastSpeechMs;
+      if (age > kTalkerForgetMs) {
+        it = g_remoteTalkers.erase(it);
+        continue;
+      }
+      if (age <= kTalkingHoldMs) {
+        if (!first) out << ',';
+        first = false;
+        out << "{\"profileId\":" << it->first
+            << ",\"level\":" << std::fixed << std::setprecision(3) << it->second.level << '}';
+      }
+      ++it;
+    }
+  }
+  out << "]}";
+  return out.str();
+}
+
 void configureMumble() {
   if (!g_pluginId) return;
   g_api.requestLocalUserTransmissionMode(g_pluginId, MUMBLE_TM_PUSH_TO_TALK);
@@ -125,6 +216,8 @@ void rebuildAllowedUsers() {
   if (connection < 0 || !g_routeReady.load()) {
     std::atomic_store(&g_allowedUsers,
       std::make_shared<const std::unordered_set<mumble_userid_t>>());
+    std::atomic_store(&g_profileByUser,
+      std::make_shared<const std::unordered_map<mumble_userid_t, int>>());
     return;
   }
 
@@ -139,16 +232,22 @@ void rebuildAllowedUsers() {
   if (g_api.getAllUsers(g_pluginId, connection, &users, &count) != MUMBLE_STATUS_OK) return;
 
   auto result = std::make_shared<std::unordered_set<mumble_userid_t>>();
+  auto profiles = std::make_shared<std::unordered_map<mumble_userid_t, int>>();
   for (size_t i = 0; i < count; ++i) {
     const char* name = nullptr;
     if (g_api.getUserName(g_pluginId, connection, users[i], &name) != MUMBLE_STATUS_OK) continue;
     int profile = -1;
-    if (parseProfileName(name, profile) && allowedProfiles.count(profile)) result->insert(users[i]);
+    if (parseProfileName(name, profile)) {
+      (*profiles)[users[i]] = profile;
+      if (allowedProfiles.count(profile)) result->insert(users[i]);
+    }
     g_api.freeMemory(g_pluginId, name);
   }
   g_api.freeMemory(g_pluginId, users);
   std::atomic_store(&g_allowedUsers,
     std::static_pointer_cast<const std::unordered_set<mumble_userid_t>>(result));
+  std::atomic_store(&g_profileByUser,
+    std::static_pointer_cast<const std::unordered_map<mumble_userid_t, int>>(profiles));
 }
 
 void handleState(const std::unordered_map<std::string,std::string>& v) {
@@ -184,7 +283,14 @@ void handleRoute(const std::unordered_map<std::string,std::string>& v) {
   }
   {
     std::lock_guard<std::mutex> lock(g_routeMutex);
-    g_allowedProfiles = std::move(route);
+    g_allowedProfiles = route;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_talkerMutex);
+    for (auto itTalker = g_remoteTalkers.begin(); itTalker != g_remoteTalkers.end();) {
+      if (!route.count(itTalker->first)) itTalker = g_remoteTalkers.erase(itTalker);
+      else ++itTalker;
+    }
   }
   g_routeReady.store(true);
   g_lastRouteMs.store(nowMs());
@@ -238,6 +344,10 @@ void handleHttpClient(SOCKET client) {
       : "{\"status\":\"ok\",\"game\":false}");
     return;
   }
+  if (first.rfind("GET /talkers ", 0) == 0) {
+    sendResponse(client, 200, "application/json", buildTalkersJson());
+    return;
+  }
   const auto values = parseLines(body);
   if (first.rfind("POST /state ", 0) == 0) {
     handleState(values); sendResponse(client, 200, "text/plain", "ok"); return;
@@ -281,6 +391,12 @@ void httpLoop() {
       g_routeReady.store(false);
       std::atomic_store(&g_allowedUsers,
         std::make_shared<const std::unordered_set<mumble_userid_t>>());
+      std::atomic_store(&g_profileByUser,
+        std::make_shared<const std::unordered_map<mumble_userid_t, int>>());
+      {
+        std::lock_guard<std::mutex> lock(g_talkerMutex);
+        g_remoteTalkers.clear();
+      }
     }
   }
   closesocket(server);
@@ -293,7 +409,7 @@ mumble_error_t mumble_init(uint32_t id) {
   g_running.store(true);
   configureMumble();
   g_httpThread = std::thread(httpLoop);
-  g_api.log(g_pluginId, "SkyrimVoice initialized on 127.0.0.1:38471");
+  g_api.log(g_pluginId, "SkyrimVoice 0.2.0 initialized on 127.0.0.1:38471 (talking meter enabled)");
   return MUMBLE_STATUS_OK;
 }
 
@@ -301,6 +417,12 @@ void mumble_shutdown() {
   applyPtt(false);
   g_running.store(false);
   if (g_httpThread.joinable()) g_httpThread.join();
+  g_localLevel.store(0.0f);
+  g_lastLocalSpeechMs.store(0);
+  {
+    std::lock_guard<std::mutex> lock(g_talkerMutex);
+    g_remoteTalkers.clear();
+  }
   g_pluginId = 0;
 }
 
@@ -309,7 +431,7 @@ mumble_version_t mumble_getAPIVersion() { return MUMBLE_PLUGIN_API_VERSION; }
 void mumble_registerAPIFunctions(void* api) { g_api = MUMBLE_API_CAST(api); }
 void mumble_releaseResource(const void* pointer) { (void)pointer; }
 
-mumble_version_t mumble_getVersion() { return {0, 1, 0}; }
+mumble_version_t mumble_getVersion() { return {0, 2, 0}; }
 MumbleStringWrapper mumble_getAuthor() { return wrapStatic("Secret Skyrim MP"); }
 MumbleStringWrapper mumble_getDescription() { return wrapStatic("Skyrim proximity voice bridge for Secret Skyrim MP"); }
 uint32_t mumble_getFeatures() { return MUMBLE_FEATURE_POSITIONAL | MUMBLE_FEATURE_AUDIO; }
@@ -350,7 +472,14 @@ void mumble_onServerDisconnected(mumble_connection_t) {
   g_connection.store(static_cast<mumble_connection_t>(-1));
   g_routeReady.store(false);
   applyPtt(false);
+  g_localLevel.store(0.0f);
+  g_lastLocalSpeechMs.store(0);
   std::atomic_store(&g_allowedUsers, std::make_shared<const std::unordered_set<mumble_userid_t>>());
+  std::atomic_store(&g_profileByUser, std::make_shared<const std::unordered_map<mumble_userid_t, int>>());
+  {
+    std::lock_guard<std::mutex> lock(g_talkerMutex);
+    g_remoteTalkers.clear();
+  }
 }
 void mumble_onServerSynchronized(mumble_connection_t connection) {
   g_connection.store(connection);
@@ -360,13 +489,30 @@ void mumble_onServerSynchronized(mumble_connection_t connection) {
 void mumble_onUserAdded(mumble_connection_t, mumble_userid_t) { rebuildAllowedUsers(); }
 void mumble_onUserRemoved(mumble_connection_t, mumble_userid_t) { rebuildAllowedUsers(); }
 
+bool mumble_onAudioInput(short* inputPCM, uint32_t sampleCount, uint16_t channelCount,
+                         uint32_t, bool isSpeech) {
+  if (!inputPCM || !isSpeech || !g_ptt.load()) return false;
+  const size_t total = static_cast<size_t>(sampleCount) * channelCount;
+  const float level = levelFromInt16Pcm(inputPCM, total);
+  if (level > 0.0f) {
+    const long long now = nowMs();
+    const float previous = (now - g_lastLocalSpeechMs.load() <= kTalkingHoldMs) ? g_localLevel.load() : 0.0f;
+    g_localLevel.store(std::max(level, previous * 0.72f));
+    g_lastLocalSpeechMs.store(now);
+  }
+  return false;
+}
+
 bool mumble_onAudioSourceFetched(float* pcm, uint32_t sampleCount, uint16_t channelCount,
                                  uint32_t, bool isSpeech, mumble_userid_t userID) {
   if (!isSpeech || !pcm) return false;
   const auto allowed = std::atomic_load(&g_allowedUsers);
   const bool permit = g_routeReady.load() && allowed && allowed->find(userID) != allowed->end();
-  if (permit) return false;
   const size_t total = static_cast<size_t>(sampleCount) * channelCount;
+  if (permit) {
+    noteRemoteSpeech(userID, levelFromFloatPcm(pcm, total));
+    return false;
+  }
   std::fill(pcm, pcm + total, 0.0f);
   return true;
 }

@@ -241,6 +241,43 @@ kbd{
   padding:1px 5px;border:1px solid rgba(196,211,221,.20);background:#151b20;
   color:#b7c2c9;font-family:inherit;font-size:10px
 }
+
+
+/* ---------- VOICE HUD ---------- */
+#voiceHud{
+  position:absolute;right:34px;bottom:38px;z-index:20;
+  display:flex;align-items:center;gap:8px;height:42px;padding:5px 8px 5px 7px;
+  pointer-events:none;opacity:.28;transform:translateZ(0);
+  border:1px solid rgba(181,198,209,.14);
+  background:linear-gradient(180deg,rgba(17,22,26,.64),rgba(5,8,10,.54));
+  box-shadow:0 2px 9px rgba(0,0,0,.48),inset 0 1px rgba(255,255,255,.025);
+  transition:opacity .12s ease,border-color .12s ease,transform .12s ease
+}
+#voiceHud.online{opacity:.52;border-color:rgba(153,180,196,.24)}
+#voiceHud.ptt{opacity:.82;border-color:rgba(198,170,114,.44)}
+#voiceHud.talking{opacity:1;border-color:rgba(147,195,214,.70);transform:scale(1.035)}
+#voiceHud.offline{opacity:.20;filter:saturate(.25)}
+.voiceMic{
+  width:25px;height:29px;display:flex;align-items:center;justify-content:center;
+  color:#aeb8be;filter:drop-shadow(0 1px 2px #000)
+}
+.voiceMic svg{width:22px;height:26px;overflow:visible}
+.voiceMic .micBody,.voiceMic .micStem{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+#voiceHud.ptt .voiceMic{color:#d2b879}
+#voiceHud.talking .voiceMic{color:#b9e1ef;animation:voicePulse .58s ease-in-out infinite alternate}
+@keyframes voicePulse{from{filter:drop-shadow(0 0 1px rgba(172,220,239,.25))}to{filter:drop-shadow(0 0 5px rgba(172,220,239,.72))}}
+.voiceBars{width:25px;height:23px;display:flex;align-items:flex-end;gap:2px;padding-bottom:2px}
+.voiceBars i{display:block;width:4px;height:4px;background:#68757d;box-shadow:0 1px 2px #000;transition:height .08s linear,background .12s ease}
+#voiceHud.ptt .voiceBars i{background:#9d885d}
+#voiceHud.talking .voiceBars i{background:#9fcbdc}
+.voiceKey{
+  min-width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+  border:1px solid rgba(188,203,212,.22);background:rgba(4,7,9,.72);
+  color:#7d8991;font-size:10px;font-weight:bold;letter-spacing:.05em
+}
+#voiceHud.ptt .voiceKey{color:#dac48f;border-color:rgba(208,183,126,.42)}
+#voiceHud.talking .voiceKey{color:#dff5ff;border-color:rgba(160,205,225,.55)}
+
 </style>
 </head>
 <body>
@@ -250,6 +287,17 @@ kbd{
     <input id="input" maxlength="180" autocomplete="off" placeholder="Сообщение или /help">
     <div id="hint">ENTER — отправить · ESC — закрыть · T — открыть чат</div>
   </div>
+</div>
+
+<div id="voiceHud" class="offline" title="Голосовой чат">
+  <div class="voiceMic" aria-hidden="true">
+    <svg viewBox="0 0 24 28" focusable="false">
+      <rect class="micBody" x="8" y="2" width="8" height="14" rx="4"></rect>
+      <path class="micStem" d="M5.5 12.5v1.2c0 4 2.9 6.8 6.5 6.8s6.5-2.8 6.5-6.8v-1.2M12 20.5V25M8.5 25h7"></path>
+    </svg>
+  </div>
+  <div class="voiceBars" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div class="voiceKey">N</div>
 </div>
 
 <div id="adminOverlay">
@@ -370,6 +418,8 @@ kbd{
   const emptyTarget=document.getElementById('emptyTarget');
   const status=document.getElementById('adminStatus');
   const announceText=document.getElementById('announceText');
+  const voiceHud=document.getElementById('voiceHud');
+  const voiceBars=voiceHud?Array.from(voiceHud.querySelectorAll('.voiceBars i')):[];
 
   let adminState=null;
   let selectedId=null;
@@ -411,6 +461,29 @@ kbd{
       d.textContent=String(x.text||'');
       log.appendChild(d);
     }
+  };
+
+
+  window.coreVoiceSetState=function(state){
+    if(!voiceHud) return;
+    state=state||{};
+    const online=!!state.online;
+    const ptt=!!state.ptt;
+    const talking=!!state.talking;
+    const level=Math.max(0,Math.min(1,Number(state.level)||0));
+
+    voiceHud.classList.toggle('offline',!online);
+    voiceHud.classList.toggle('online',online);
+    voiceHud.classList.toggle('ptt',online&&ptt);
+    voiceHud.classList.toggle('talking',online&&talking);
+    voiceHud.title=!online?'Голосовой чат недоступен':(talking?'Микрофон: речь':(ptt?'Микрофон открыт':'Голосовой чат готов'));
+
+    const shaped=talking?Math.max(.12,level):0;
+    voiceBars.forEach((bar,index)=>{
+      const multipliers=[.62,.92,.76,1.0];
+      const h=4+Math.round(17*Math.min(1,shaped*multipliers[index]));
+      bar.style.height=h+'px';
+    });
   };
 
   function sendAdmin(action,extra){
@@ -647,6 +720,7 @@ kbd{
     }
   });
 
+  window.coreVoiceSetState({online:false,ptt:false,talking:false,level:0});
   spSend('core-rp-ready');
 })();
 </script>
