@@ -1,0 +1,34 @@
+{
+  "serverName": "SkyMP Test RP",
+  "maxUserId": 100,
+  "connectionPollMs": 1000,
+  "playtimeFlushMs": 30000,
+  "welcomeDelayMs": 1200,
+  "chatOpenKeyScanCode": 20,
+  "chatOpenKeyLabel": "T",
+  "chatHistorySize": 22,
+  "chatRadius": 1500,
+  "whisperRadius": 450,
+  "shoutRadius": 3500,
+  "maxMessageLength": 180,
+  "spamWindowMs": 10000,
+  "spamMaxMessages": 6,
+  "adminProfileIds": [
+    1
+  ],
+  "allowSelfNameChange": true,
+  "announceJoins": true,
+  "announceLeaves": true,
+  "announceDeaths": true,
+  "debugActivations": false,
+  "staffProfiles": {
+    "1": "owner"
+  },
+  "adminAuditFile": "admin-audit.log",
+  "adminPanelRefreshMs": 3000,
+  "voiceEnabled": true,
+  "voicePollMs": 250,
+  "voiceEnterRadius": 1190,
+  "voiceLeaveRadius": 1330,
+  "voiceTransportClearMs": 700
+}

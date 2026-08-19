@@ -1,0 +1,654 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+:root{
+  --bg:rgba(7,10,13,.965);
+  --panel:rgba(14,18,22,.965);
+  --panel2:rgba(21,27,33,.94);
+  --line:rgba(197,211,221,.20);
+  --line2:rgba(197,211,221,.10);
+  --text:#e6e8e9;
+  --muted:#9099a1;
+  --dim:#626c74;
+  --sky:#9fc2d8;
+  --sky2:#6f9bb8;
+  --selected:rgba(91,137,166,.42);
+  --selected2:rgba(69,106,131,.26);
+  --gold:#c6aa72;
+  --danger:#d88686;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;width:100%;height:100%;overflow:hidden;background:transparent;
+  font-family:"Trebuchet MS","Segoe UI",Arial,sans-serif;color:var(--text);
+  user-select:none
+}
+button,input{font:inherit}
+input{user-select:text}
+button{cursor:pointer}
+
+/* ---------- RP CHAT / SKYUI-LIKE ---------- */
+#chatWrap{
+  position:absolute;left:34px;bottom:40px;width:720px;pointer-events:none;
+  filter:drop-shadow(0 3px 4px rgba(0,0,0,.65))
+}
+#log{
+  display:flex;flex-direction:column;justify-content:flex-end;gap:2px;
+  max-height:340px;overflow:hidden;font-size:16px;text-shadow:0 1px 2px #000
+}
+.m{
+  padding:3px 10px 3px 12px;
+  background:linear-gradient(90deg,rgba(6,9,12,.64),rgba(6,9,12,.18) 82%,transparent);
+  border-left:2px solid rgba(170,190,203,.22);
+  word-wrap:break-word
+}
+.system{color:#c9ced1}.chat{color:#f1f2f2}.me{color:#cbb8df}.do{color:#d9c490}
+.try-ok{color:#9ccda4}.try-fail{color:#d89a9a}.ooc{color:#9ebbd1}
+.admin{color:#d7bc82;border-left-color:#c6aa72}.death{color:#d99999}
+#inputBox{display:none;margin-top:5px;pointer-events:auto}
+#input{
+  width:100%;height:36px;padding:7px 12px;
+  border:1px solid rgba(188,205,216,.50);border-radius:0;
+  background:linear-gradient(#13191e,#090d10);color:#f5f6f6;
+  font-size:16px;outline:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.8)
+}
+#input:focus{border-color:#a9cada;box-shadow:inset 0 0 0 1px rgba(95,140,166,.34)}
+#hint{
+  margin-top:3px;padding-left:3px;color:#89939b;font-size:11px;
+  text-transform:uppercase;letter-spacing:.08em;text-shadow:0 1px 2px #000
+}
+
+/* ---------- ADMIN OVERLAY ---------- */
+#adminOverlay{
+  display:none;position:absolute;inset:0;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at center,rgba(3,5,7,.28),rgba(0,0,0,.58));
+  pointer-events:auto
+}
+#adminOverlay.open{display:flex}
+#adminPanel{
+  width:min(1180px,94vw);height:min(760px,91vh);
+  display:flex;flex-direction:column;position:relative;
+  background:
+    linear-gradient(135deg,rgba(255,255,255,.018) 25%,transparent 25%) 0 0/5px 5px,
+    linear-gradient(180deg,rgba(19,25,30,.985),rgba(7,10,13,.985));
+  border:1px solid rgba(190,207,218,.32);
+  box-shadow:
+    0 24px 90px rgba(0,0,0,.78),
+    inset 0 0 0 1px rgba(0,0,0,.85),
+    inset 0 1px rgba(255,255,255,.05)
+}
+#adminPanel:before,#adminPanel:after{
+  content:"";position:absolute;left:12px;right:12px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(171,198,214,.32),transparent);
+  pointer-events:none
+}
+#adminPanel:before{top:7px}
+#adminPanel:after{bottom:7px}
+
+#adminTop{
+  height:72px;display:flex;align-items:center;padding:0 22px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(49,60,68,.20),rgba(8,11,14,.12))
+}
+#titleOrnament{
+  width:24px;height:24px;margin-right:12px;position:relative;opacity:.75
+}
+#titleOrnament:before,#titleOrnament:after{
+  content:"";position:absolute;left:6px;top:6px;width:10px;height:10px;
+  border:1px solid #9db4c2;transform:rotate(45deg)
+}
+#titleOrnament:after{left:9px;top:9px;width:4px;height:4px;background:#9db4c2}
+#adminTitleWrap{display:flex;flex-direction:column}
+#adminTitle{
+  font-family:Georgia,"Times New Roman",serif;
+  font-size:23px;letter-spacing:.14em;text-transform:uppercase;color:#eef2f4;
+  text-shadow:0 2px 4px #000
+}
+#adminSubtitle{
+  margin-top:3px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#77838c
+}
+#roleBadge{
+  margin-left:18px;padding:4px 10px;
+  border-top:1px solid rgba(199,177,124,.48);
+  border-bottom:1px solid rgba(199,177,124,.24);
+  color:#cdb47d;font-size:11px;letter-spacing:.14em;text-transform:uppercase
+}
+#onlineBadge{margin-left:12px;color:#8c969e;font-size:12px;letter-spacing:.05em}
+.topSpacer{flex:1}
+.skyButton{
+  min-height:32px;padding:6px 14px;border:1px solid rgba(181,198,209,.25);border-radius:0;
+  background:linear-gradient(#242c32,#11161a);color:#d8dcde;
+  text-transform:uppercase;letter-spacing:.08em;font-size:11px;
+  box-shadow:inset 0 1px rgba(255,255,255,.04)
+}
+.skyButton:hover,.skyButton:focus{
+  border-color:rgba(150,191,215,.64);color:#fff;
+  background:linear-gradient(#35444e,#172028);outline:none
+}
+.skyButton.primary{
+  color:#e8f3f8;border-color:rgba(124,170,198,.46);
+  background:linear-gradient(#38566a,#1c2b35)
+}
+.skyButton.primary:hover{background:linear-gradient(#4b6e83,#223744)}
+.skyButton.danger{
+  color:#e5b2b2;border-color:rgba(199,106,106,.38);
+  background:linear-gradient(#4e2828,#231516)
+}
+.skyButton.danger:hover{border-color:#c77878;background:linear-gradient(#653232,#30191a)}
+
+#adminBody{display:grid;grid-template-columns:340px 1fr;min-height:0;flex:1}
+
+/* ---------- LEFT PLAYER LIST ---------- */
+#playersSide{
+  border-right:1px solid var(--line);
+  background:linear-gradient(90deg,rgba(3,5,7,.30),rgba(14,19,23,.20));
+  padding:15px 0 14px;display:flex;flex-direction:column;min-height:0
+}
+.sideCaption{
+  height:28px;padding:0 18px;color:#a7b0b6;font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;display:flex;align-items:center
+}
+#playerSearch{
+  margin:0 14px 10px;width:calc(100% - 28px);height:34px;padding:7px 10px;
+  border:1px solid rgba(181,198,209,.22);border-radius:0;
+  background:rgba(3,6,8,.72);color:#edf0f2;outline:none
+}
+#playerSearch:focus{border-color:#89aec4;box-shadow:inset 0 0 0 1px rgba(92,137,164,.20)}
+#playersList{overflow-y:auto;min-height:0;flex:1;padding:0 6px}
+#playersList::-webkit-scrollbar,#adminMain::-webkit-scrollbar{width:7px}
+#playersList::-webkit-scrollbar-thumb,#adminMain::-webkit-scrollbar-thumb{background:#44545f}
+#playersList::-webkit-scrollbar-track,#adminMain::-webkit-scrollbar-track{background:#101519}
+.playerRow{
+  width:100%;min-height:50px;text-align:left;border:0;border-top:1px solid transparent;
+  border-bottom:1px solid transparent;border-radius:0;background:transparent;color:#d8dcdf;
+  padding:8px 12px 8px 17px;position:relative
+}
+.playerRow:before{
+  content:"";position:absolute;left:5px;top:19px;width:5px;height:5px;
+  border:1px solid transparent;transform:rotate(45deg)
+}
+.playerRow:hover{background:rgba(104,139,159,.12);color:#fff}
+.playerRow.active{
+  background:linear-gradient(90deg,var(--selected),var(--selected2) 72%,transparent);
+  border-top-color:rgba(153,190,211,.20);border-bottom-color:rgba(153,190,211,.20);
+  color:#fff
+}
+.playerRow.active:before{border-color:#b9d4e4;background:#8fb7cf}
+.pName{font-size:15px;letter-spacing:.02em}
+.pMeta{margin-top:3px;color:#7f8991;font-size:10px;letter-spacing:.045em}
+.playerRow.active .pMeta{color:#aebdc7}
+.staffMark{color:#c8af79}
+
+/* ---------- MAIN ---------- */
+#adminMain{padding:20px 25px 28px;overflow-y:auto;min-height:0}
+#emptyTarget{
+  min-height:205px;display:flex;align-items:center;justify-content:center;
+  color:#69747c;font-family:Georgia,"Times New Roman",serif;font-style:italic;font-size:18px
+}
+#targetContent{display:none}
+#targetHeader{
+  min-height:61px;display:flex;align-items:flex-start;gap:12px;
+  border-bottom:1px solid rgba(184,201,212,.16);padding-bottom:12px
+}
+#targetName{
+  font-family:Georgia,"Times New Roman",serif;font-size:26px;letter-spacing:.045em;color:#f0f2f3
+}
+#targetIds{margin-top:5px;color:#838e96;font-size:11px;letter-spacing:.06em}
+#targetStaff{
+  margin-left:auto;color:#c9b27d;font-size:11px;letter-spacing:.13em;text-transform:uppercase
+}
+.infoGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:14px;background:var(--line2)}
+.infoCard{
+  min-height:65px;padding:10px 12px;background:rgba(10,14,17,.86)
+}
+.infoLabel{font-size:9px;color:#68737b;letter-spacing:.16em;text-transform:uppercase}
+.infoValue{margin-top:7px;font-size:13px;color:#cbd1d5;word-break:break-word}
+
+.section{margin-top:20px}
+.sectionTitle{
+  height:24px;display:flex;align-items:center;color:#9ca6ad;font-size:10px;
+  letter-spacing:.19em;text-transform:uppercase
+}
+.sectionTitle:after{
+  content:"";height:1px;flex:1;margin-left:12px;background:linear-gradient(90deg,var(--line),transparent)
+}
+.actionGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.row{display:flex;gap:5px;align-items:center}
+.field{
+  flex:1;height:34px;padding:7px 10px;border:1px solid rgba(179,198,210,.22);border-radius:0;
+  background:rgba(4,7,9,.78);color:#edf0f2;outline:none;min-width:0
+}
+.field:focus{
+  border-color:#91b7cd;box-shadow:inset 0 0 0 1px rgba(93,141,169,.25);
+  background:rgba(7,11,14,.94)
+}
+.smallField{width:128px;flex:0 1 145px}
+#selfActions{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+#adminStatus{
+  min-height:20px;margin-top:14px;padding:5px 8px;
+  border-left:2px solid rgba(121,160,183,.35);
+  color:#87959e;font-size:11px;letter-spacing:.03em
+}
+#announceSection{display:none}
+#footerHelp{
+  min-height:34px;padding:9px 20px 8px;border-top:1px solid rgba(185,202,213,.14);
+  color:#657078;font-size:10px;letter-spacing:.07em;text-transform:uppercase;
+  background:rgba(0,0,0,.23)
+}
+kbd{
+  padding:1px 5px;border:1px solid rgba(196,211,221,.20);background:#151b20;
+  color:#b7c2c9;font-family:inherit;font-size:10px
+}
+</style>
+</head>
+<body>
+<div id="chatWrap">
+  <div id="log"></div>
+  <div id="inputBox">
+    <input id="input" maxlength="180" autocomplete="off" placeholder="Сообщение или /help">
+    <div id="hint">ENTER — отправить · ESC — закрыть · T — открыть чат</div>
+  </div>
+</div>
+
+<div id="adminOverlay">
+  <div id="adminPanel">
+    <div id="adminTop">
+      <div id="titleOrnament"></div>
+      <div id="adminTitleWrap">
+        <div id="adminTitle">SkyMP Administration</div>
+        <div id="adminSubtitle">Server Control Interface</div>
+      </div>
+      <div id="roleBadge">STAFF</div>
+      <div id="onlineBadge"></div>
+      <div class="topSpacer"></div>
+      <button id="refreshBtn" class="skyButton">Обновить</button>
+      <button id="closeAdminBtn" class="skyButton" style="margin-left:5px">Закрыть</button>
+    </div>
+
+    <div id="adminBody">
+      <div id="playersSide">
+        <div class="sideCaption">Игроки в мире</div>
+        <input id="playerSearch" autocomplete="off" placeholder="Поиск: имя / ID / profile">
+        <div id="playersList"></div>
+      </div>
+
+      <div id="adminMain">
+        <div id="emptyTarget">Выберите персонажа в списке слева</div>
+
+        <div id="targetContent">
+          <div id="targetHeader">
+            <div>
+              <div id="targetName"></div>
+              <div id="targetIds"></div>
+            </div>
+            <div id="targetStaff"></div>
+          </div>
+
+          <div class="infoGrid">
+            <div class="infoCard"><div class="infoLabel">Позиция</div><div class="infoValue" id="infoPos">—</div></div>
+            <div class="infoCard"><div class="infoLabel">Cell / World</div><div class="infoValue" id="infoCell">—</div></div>
+            <div class="infoCard"><div class="infoLabel">Смерти</div><div class="infoValue" id="infoDeaths">—</div></div>
+            <div class="infoCard"><div class="infoLabel">Время онлайн</div><div class="infoValue" id="infoPlaytime">—</div></div>
+          </div>
+
+          <div class="section">
+            <div class="sectionTitle">Перемещение</div>
+            <div class="actionGrid">
+              <button class="skyButton primary" data-action="tp">Телепорт к игроку</button>
+              <button class="skyButton" data-action="bring">Притянуть к себе</button>
+              <button class="skyButton" data-action="inspect">Inspect</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="sectionTitle">Состояние персонажа</div>
+            <div class="actionGrid">
+              <button class="skyButton" data-action="heal">Лечить</button>
+              <button class="skyButton" data-action="resurrect">Воскресить</button>
+              <button class="skyButton" data-action="racemenu">RaceMenu</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="sectionTitle">Модерация</div>
+            <div class="row">
+              <input id="kickReason" class="field" maxlength="120" autocomplete="off" placeholder="Причина отключения">
+              <button id="kickBtn" class="skyButton danger" style="min-width:160px">Kick</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sectionTitle">Staff — личные действия</div>
+          <div id="selfActions">
+            <button class="skyButton" data-self-action="back">Вернуться /back</button>
+            <button class="skyButton" data-self-action="healSelf">Лечить себя</button>
+            <button class="skyButton" data-self-action="resurrectSelf">Воскресить себя</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sectionTitle">Телепорт по координатам — текущая Cell / World</div>
+          <div class="row">
+            <input id="coordX" class="field smallField" autocomplete="off" placeholder="X">
+            <input id="coordY" class="field smallField" autocomplete="off" placeholder="Y">
+            <input id="coordZ" class="field smallField" autocomplete="off" placeholder="Z">
+            <button id="tpCoordsBtn" class="skyButton primary">Переместиться</button>
+          </div>
+        </div>
+
+        <div id="announceSection" class="section">
+          <div class="sectionTitle">Объявление для всего сервера</div>
+          <div class="row">
+            <input id="announceText" class="field" maxlength="220" autocomplete="off"
+                   placeholder="Введите текст анонса и нажмите Enter">
+            <button id="announceBtn" class="skyButton primary">Объявить</button>
+          </div>
+        </div>
+
+        <div id="adminStatus">Панель готова.</div>
+      </div>
+    </div>
+
+    <div id="footerHelp">
+      <kbd>/admin</kbd> открыть · <kbd>ESC</kbd> закрыть · активное поле не теряет фокус при автообновлении · действия пишутся в admin-audit.log
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const log=document.getElementById('log');
+  const box=document.getElementById('inputBox');
+  const input=document.getElementById('input');
+  const overlay=document.getElementById('adminOverlay');
+  const playerSearch=document.getElementById('playerSearch');
+  const playersList=document.getElementById('playersList');
+  const targetContent=document.getElementById('targetContent');
+  const emptyTarget=document.getElementById('emptyTarget');
+  const status=document.getElementById('adminStatus');
+  const announceText=document.getElementById('announceText');
+
+  let adminState=null;
+  let selectedId=null;
+  let firstAdminOpen=true;
+
+  function spSend(name,arg){
+    if(!window.skyrimPlatform) return;
+    if(typeof arg==='undefined') window.skyrimPlatform.sendMessage(name);
+    else window.skyrimPlatform.sendMessage(name,arg);
+  }
+
+  function isAdminOpen(){
+    return overlay.classList.contains('open');
+  }
+
+  function sendChat(){
+    const v=input.value.trim();
+    if(v) spSend('core-rp-chat',v);
+    input.value='';
+  }
+
+  window.coreRpOpen=function(){
+    if(isAdminOpen()) return;
+    box.style.display='block';
+    setTimeout(()=>input.focus(),0);
+  };
+
+  window.coreRpClose=function(){
+    box.style.display='none';
+    if(document.activeElement===input) input.blur();
+  };
+
+  window.coreRpSetState=function(state){
+    if(!state || !Array.isArray(state.messages)) return;
+    log.textContent='';
+    for(const x of state.messages.slice(-22)){
+      const d=document.createElement('div');
+      d.className='m '+(x.kind||'system');
+      d.textContent=String(x.text||'');
+      log.appendChild(d);
+    }
+  };
+
+  function sendAdmin(action,extra){
+    const payload=Object.assign({action:action},extra||{});
+    spSend('core-admin-action',JSON.stringify(payload));
+    status.textContent='Выполняется: '+action;
+  }
+
+  function closeAdmin(){
+    overlay.classList.remove('open');
+    status.textContent='Панель закрыта.';
+    firstAdminOpen=true;
+    const active=document.activeElement;
+    if(active && active.blur) active.blur();
+    spSend('core-admin-close');
+  }
+
+  function getSelected(){
+    if(!adminState || !Array.isArray(adminState.players)) return null;
+    return adminState.players.find(p=>String(p.userId)===String(selectedId))||null;
+  }
+
+  function fmtPos(p){
+    if(!p || !Array.isArray(p.pos)) return '—';
+    return '['+p.pos.map(v=>Math.round(Number(v)||0)).join(', ')+']';
+  }
+
+  function renderPlayers(){
+    if(!adminState) return;
+    const q=(playerSearch.value||'').trim().toLowerCase();
+    playersList.textContent='';
+    const players=(adminState.players||[]).filter(p=>{
+      if(!q) return true;
+      return String(p.name||'').toLowerCase().includes(q) ||
+             String(p.userId).includes(q) ||
+             String(p.profileId).includes(q) ||
+             String(p.actorId||'').toLowerCase().includes(q);
+    });
+
+    for(const p of players){
+      const b=document.createElement('button');
+      b.className='playerRow'+(String(p.userId)===String(selectedId)?' active':'');
+      b.type='button';
+
+      const name=document.createElement('div');
+      name.className='pName';
+      name.textContent=p.name||('Player '+p.userId);
+
+      const meta=document.createElement('div');
+      meta.className='pMeta';
+      meta.appendChild(document.createTextNode('ID '+p.userId+' · profile '+p.profileId+' · '+p.actorId));
+
+      if(p.staffRole){
+        const s=document.createElement('span');
+        s.className='staffMark';
+        s.textContent=' · '+String(p.staffRole).toUpperCase();
+        meta.appendChild(s);
+      }
+
+      b.appendChild(name);
+      b.appendChild(meta);
+      b.onclick=()=>{
+        selectedId=p.userId;
+        renderPlayers();
+        renderTarget();
+      };
+      playersList.appendChild(b);
+    }
+  }
+
+  function renderTarget(){
+    const p=getSelected();
+    if(!p){
+      emptyTarget.style.display='flex';
+      targetContent.style.display='none';
+      return;
+    }
+
+    emptyTarget.style.display='none';
+    targetContent.style.display='block';
+    document.getElementById('targetName').textContent=p.name||('Player '+p.userId);
+    document.getElementById('targetIds').textContent='ID '+p.userId+' · PROFILE '+p.profileId+' · '+p.actorId;
+    document.getElementById('targetStaff').textContent=p.staffRole?('STAFF · '+String(p.staffRole).toUpperCase()):'';
+    document.getElementById('infoPos').textContent=fmtPos(p.location);
+    document.getElementById('infoCell').textContent=(p.location&&p.location.cell)||'—';
+    document.getElementById('infoDeaths').textContent=String(p.deaths||0);
+    document.getElementById('infoPlaytime').textContent=Math.floor((p.playtimeSeconds||0)/60)+' мин.';
+  }
+
+  function renderAdmin(){
+    if(!adminState) return;
+
+    document.getElementById('roleBadge').textContent=String(adminState.role||'staff').toUpperCase();
+    document.getElementById('onlineBadge').textContent='ОНЛАЙН '+String((adminState.players||[]).length);
+    document.getElementById('announceSection').style.display=adminState.canAnnounce?'block':'none';
+
+    const exists=(adminState.players||[]).some(p=>String(p.userId)===String(selectedId));
+    if(!exists){
+      const first=(adminState.players||[]).find(
+        p=>String(p.userId)!==String(adminState.self&&adminState.self.userId)
+      ) || (adminState.players||[])[0];
+      selectedId=first?first.userId:null;
+    }
+
+    const selfLoc=adminState.self&&adminState.self.location;
+    if(selfLoc && Array.isArray(selfLoc.pos)){
+      const ids=['coordX','coordY','coordZ'];
+      ids.forEach((id,i)=>{
+        const el=document.getElementById(id);
+        // Never replace a value while the admin is editing that field.
+        if(document.activeElement!==el){
+          el.value=Math.round(Number(selfLoc.pos[i])||0);
+        }
+      });
+    }
+
+    renderPlayers();
+    renderTarget();
+  }
+
+  /*
+   * IMPORTANT FOCUS FIX:
+   * Server refreshes the admin state every few seconds.
+   * An old version focused playerSearch after EVERY refresh, which stole
+   * focus from announce/kick/coordinate inputs. Now only the first open
+   * receives automatic focus. Refreshes preserve document.activeElement.
+   */
+  window.coreAdminReceive=function(payload){
+    if(!payload || !payload.state) return;
+
+    const alreadyOpen=isAdminOpen();
+    const activeBefore=document.activeElement;
+    const activeId=activeBefore && activeBefore.id ? activeBefore.id : null;
+    let selection=null;
+
+    if(activeBefore && typeof activeBefore.selectionStart==='number'){
+      selection=[activeBefore.selectionStart,activeBefore.selectionEnd];
+    }
+
+    adminState=payload.state;
+    overlay.classList.add('open');
+    box.style.display='none';
+    if(document.activeElement===input) input.blur();
+
+    renderAdmin();
+
+    if(!alreadyOpen && firstAdminOpen){
+      firstAdminOpen=false;
+      setTimeout(()=>playerSearch.focus(),20);
+      return;
+    }
+
+    // On periodic refresh, restore the exact active field/caret if it still exists.
+    if(activeId){
+      const same=document.getElementById(activeId);
+      if(same){
+        setTimeout(()=>{
+          same.focus();
+          if(selection && typeof same.setSelectionRange==='function'){
+            try{same.setSelectionRange(selection[0],selection[1]);}catch(_){}
+          }
+        },0);
+      }
+    }
+  };
+
+  playerSearch.addEventListener('input',renderPlayers);
+
+  document.querySelectorAll('[data-action]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const p=getSelected();
+      if(!p){status.textContent='Сначала выберите игрока.';return;}
+      sendAdmin(btn.getAttribute('data-action'),{targetId:p.userId});
+    });
+  });
+
+  document.querySelectorAll('[data-self-action]').forEach(btn=>{
+    btn.addEventListener('click',()=>sendAdmin(btn.getAttribute('data-self-action')));
+  });
+
+  document.getElementById('kickBtn').onclick=function(){
+    const p=getSelected();
+    if(!p){status.textContent='Сначала выберите игрока.';return;}
+    const reason=document.getElementById('kickReason').value.trim();
+    if(!confirm('Отключить '+p.name+' (ID '+p.userId+')?')) return;
+    sendAdmin('kick',{targetId:p.userId,reason:reason});
+  };
+
+  document.getElementById('tpCoordsBtn').onclick=function(){
+    sendAdmin('tpcoords',{
+      x:document.getElementById('coordX').value,
+      y:document.getElementById('coordY').value,
+      z:document.getElementById('coordZ').value
+    });
+  };
+
+  function sendAnnouncement(){
+    const text=announceText.value.trim();
+    if(!text) return;
+    sendAdmin('announce',{text:text});
+    announceText.value='';
+    // Keep typing workflow natural after send.
+    setTimeout(()=>announceText.focus(),0);
+  }
+
+  document.getElementById('announceBtn').onclick=sendAnnouncement;
+  announceText.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){
+      e.preventDefault();
+      e.stopPropagation();
+      sendAnnouncement();
+    }
+  });
+
+  document.getElementById('refreshBtn').onclick=()=>sendAdmin('refresh');
+  document.getElementById('closeAdminBtn').onclick=closeAdmin;
+
+  input.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){
+      e.preventDefault();
+      sendChat();
+    }else if(e.key==='Escape'){
+      e.preventDefault();
+      window.coreRpClose();
+      spSend('core-rp-close');
+    }
+  });
+
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape' && isAdminOpen()){
+      e.preventDefault();
+      e.stopPropagation();
+      closeAdmin();
+    }
+  });
+
+  spSend('core-rp-ready');
+})();
+</script>
+</body>
+</html>

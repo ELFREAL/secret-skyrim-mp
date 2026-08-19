@@ -1,0 +1,17 @@
+{
+  "dataDir": "data",
+  "loadOrder": [
+    "../gameData/Skyrim.esm",
+    "../gameData/Update.esm",
+    "../gameData/Dawnguard.esm",
+    "../gameData/HearthFires.esm",
+    "../gameData/Dragonborn.esm"
+  ],
+  "master": "",
+  "maxPlayers": 100,
+  "name": "SkyMP RP Server",
+  "npcEnabled": false,
+  "npcSettings": {},
+  "offlineMode": true,
+  "port": 7777
+}

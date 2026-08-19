@@ -1,0 +1,46 @@
+{
+  "name": "secret-skyrim-mp-launcher",
+  "version": "1.2.0",
+  "description": "Secret Skyrim MP launcher",
+  "main": "src/main.js",
+  "author": "Secret Skyrim MP",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/runtime.test.js && node tests/voice-runtime.test.js",
+    "dist": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.secretskyrim.mp.launcher",
+    "productName": "Secret Skyrim MP Launcher",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Secret Skyrim MP Launcher.${ext}"
+    },
+    "portable": {
+      "artifactName": "Secret Skyrim MP Launcher.${ext}"
+    }
+  }
+}

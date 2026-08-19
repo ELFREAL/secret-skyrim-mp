@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Secret Skyrim MP</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="grain"></div>
+  <header class="titlebar">
+    <div class="brand-mini">SECRET SKYRIM MP</div>
+    <div class="window-controls">
+      <button id="minimizeBtn" aria-label="Свернуть">—</button>
+      <button id="closeBtn" class="close" aria-label="Закрыть">×</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div class="crest" aria-hidden="true">
+        <div class="crest-ring"></div>
+        <div class="crest-rune">ᛉ</div>
+      </div>
+      <p class="eyebrow">THE ELDER SCROLLS V · MULTIPLAYER</p>
+      <h1>SECRET<br><span>SKYRIM MP</span></h1>
+      <p class="subtitle">Север ждёт. Путь начинается через SKSE.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <span class="section-label">ИГРОВАЯ ПАПКА</span>
+          <div id="gamePath" class="path">Не выбрана</div>
+        </div>
+        <button id="chooseBtn" class="secondary">УКАЗАТЬ ПАПКУ</button>
+      </div>
+
+      <div class="checks">
+        <div class="check" data-key="skyrim"><span class="dot"></span><span>SkyrimSE.exe</span><b>—</b></div>
+        <div class="check" data-key="skse"><span class="dot"></span><span>SKSE64</span><b>—</b></div>
+        <div class="check" data-key="skymp"><span class="dot"></span><span>SkyMP Client</span><b>—</b></div>
+        <div class="check" data-key="voice"><span class="dot"></span><span>Голос</span><b>—</b></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="launch-row">
+        <div class="state-block">
+          <span class="section-label">СОСТОЯНИЕ</span>
+          <div id="stateText" class="state-text">Укажите папку Skyrim</div>
+          <div id="detailText" class="detail">Лаунчер запомнит выбранный путь.</div>
+        </div>
+        <button id="playBtn" class="play" disabled>
+          <span class="play-rune">ᛏ</span>
+          <span>ИГРАТЬ</span>
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>SECRET SKYRIM MP</span>
+    <span>LAUNCHER · VOICE STAGE II + III</span>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
