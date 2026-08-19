@@ -1,0 +1,30 @@
+name: Validate
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and repository checks
+        run: |
+          node --check server/runtime/gamemode.js
+          node --check client/skyrim-platform/secret-skyrim-voice.js
+          node --check launcher/src/main.js
+          node --check launcher/src/preload.js
+          node --check launcher/src/game-runtime.js
+          node --check launcher/src/voice-runtime.js
+          node scripts/validate.mjs
+      - name: Launcher unit tests
+        working-directory: launcher
+        run: node tests/runtime.test.js && node tests/voice-runtime.test.js

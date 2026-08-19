@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  MUMBLE_VERSION: '1.5.915'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve version
+        shell: powershell
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v',''
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Validate source
+        shell: powershell
+        run: |
+          node --check server/runtime/gamemode.js
+          node --check client/skyrim-platform/secret-skyrim-voice.js
+          node scripts/validate.mjs
+          Push-Location launcher
+          node tests/runtime.test.js
+          node tests/voice-runtime.test.js
+          Pop-Location
+
+      - name: Install pinned Mumble on build runner
+        shell: powershell
+        run: ./scripts/install-mumble-runtime.ps1 -Version $env:MUMBLE_VERSION
+
+      - name: Prepare voice runtime and plugin
+        shell: powershell
+        run: |
+          ./launcher/tools/prepare-voice-runtime.ps1
+          ./launcher/tools/build-voice-plugin.ps1 -SourceFile "$pwd/voice/mumble-plugin/SkyrimVoice.cpp"
+
+      - name: Install Electron dependencies and build launcher
+        working-directory: launcher
+        run: |
+          npm install --no-audit --no-fund
+          npm run dist
+
+      - name: Package release
+        shell: powershell
+        run: |
+          if (Test-Path ./launcher/dist/Voice) { Remove-Item ./launcher/dist/Voice -Recurse -Force }
+          Copy-Item ./launcher/Voice ./launcher/dist/Voice -Recurse -Force
+          ./scripts/package-windows.ps1 -Version $env:RELEASE_VERSION
+
+      - name: Publish GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "artifacts/secret-skyrim-mp-client-$env:RELEASE_VERSION.zip" `
+            "artifacts/secret-skyrim-mp-server-$env:RELEASE_VERSION.zip" `
+            "artifacts/secret-skyrim-mp-source-$env:RELEASE_VERSION.zip" `
+            "artifacts/SHA256SUMS.txt" `
+            --repo "${{ github.repository }}" `
+            --title "Secret Skyrim MP ${{ github.ref_name }}" `
+            --generate-notes

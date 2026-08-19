@@ -1,0 +1,66 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  MUMBLE_VERSION: '1.5.915'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate source
+        shell: powershell
+        run: |
+          node --check server/runtime/gamemode.js
+          node --check client/skyrim-platform/secret-skyrim-voice.js
+          node scripts/validate.mjs
+          Push-Location launcher
+          node tests/runtime.test.js
+          node tests/voice-runtime.test.js
+          Pop-Location
+
+      - name: Install pinned Mumble on build runner
+        shell: powershell
+        run: ./scripts/install-mumble-runtime.ps1 -Version $env:MUMBLE_VERSION
+
+      - name: Prepare bundled Mumble runtime
+        shell: powershell
+        run: ./launcher/tools/prepare-voice-runtime.ps1
+
+      - name: Build SkyrimVoice plugin with MSVC
+        shell: powershell
+        run: ./launcher/tools/build-voice-plugin.ps1 -SourceFile "$pwd/voice/mumble-plugin/SkyrimVoice.cpp"
+
+      - name: Install Electron dependencies
+        working-directory: launcher
+        run: npm install --no-audit --no-fund
+
+      - name: Build portable launcher
+        working-directory: launcher
+        run: npm run dist
+
+      - name: Package client and server
+        shell: powershell
+        run: |
+          if (Test-Path ./launcher/dist/Voice) { Remove-Item ./launcher/dist/Voice -Recurse -Force }
+          Copy-Item ./launcher/Voice ./launcher/dist/Voice -Recurse -Force
+          ./scripts/package-windows.ps1 -Version "dev-${{ github.sha }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: secret-skyrim-mp-${{ github.sha }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
