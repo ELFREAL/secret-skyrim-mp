@@ -35,6 +35,10 @@ jobs:
         shell: powershell
         run: ./scripts/install-mumble-runtime.ps1 -Version $env:MUMBLE_VERSION
 
+      - name: Install pinned Mumble Server on build runner
+        shell: powershell
+        run: ./scripts/install-mumble-server-runtime.ps1 -Version $env:MUMBLE_VERSION
+
       - name: Prepare bundled Mumble runtime
         shell: powershell
         run: ./launcher/tools/prepare-voice-runtime.ps1

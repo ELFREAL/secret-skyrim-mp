@@ -101,6 +101,14 @@ function ensureMumbleConfig(paths, connection) {
   fs.mkdirSync(paths.profile, { recursive: true });
   fs.mkdirSync(path.dirname(paths.plugin), { recursive: true });
 
+  // Mumble treats a configured database path that does not exist as a
+  // user-facing fatal condition. Pre-create an empty SQLite file so the
+  // bundled client can initialize its schema without showing a dialog.
+  if (!fs.existsSync(paths.database)) {
+    const fd = fs.openSync(paths.database, 'a');
+    fs.closeSync(fd);
+  }
+
   const pluginSetting = {
     path: qtPath(paths.plugin),
     enabled: true,

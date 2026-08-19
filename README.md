@@ -22,12 +22,27 @@ Every push to `main` runs the Windows build on GitHub Actions. The runner:
 
 1. validates JS/configuration;
 2. downloads pinned Mumble **1.5.915** from the official Mumble download host;
-3. builds `SkyrimVoice.dll` with MSVC available on `windows-latest`;
-4. installs Electron dependencies only on the runner;
-5. builds the portable launcher;
-6. creates client/server/source ZIP archives and SHA-256 checksums.
+3. downloads the pinned official Mumble Server runtime for the server artifact;
+4. builds `SkyrimVoice.dll` with MSVC available on `windows-latest`;
+5. installs Electron dependencies only on the runner;
+6. builds the portable launcher;
+7. creates client/server/source ZIP archives and SHA-256 checksums.
 
 A tag such as `v0.1.0` performs the same build and publishes permanent GitHub Release assets.
+
+
+## Bundled voice server
+
+The Windows server artifact contains the official pinned Mumble Server runtime.
+Server administration is intentionally one-start:
+
+`START_SECRET_SKYRIM_SERVER.cmd`
+
+The supervisor starts the bundled `mumble-server.exe` on TCP/UDP 64738 first,
+then starts the SkyMP RP server. When the RP server exits, it terminates only
+the Mumble Server process that it started.
+
+No Mumble Server installation is required on the host machine.
 
 ## Artifacts
 

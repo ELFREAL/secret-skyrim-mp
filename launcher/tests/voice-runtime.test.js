@@ -26,6 +26,7 @@ const conn = {
   voice: { minimumDistanceMeters: 2, maximumDistanceMeters: 15, minimumVolume: 0, bloom: 0.5 }
 };
 ensureMumbleConfig(paths, conn);
+assert.equal(fs.existsSync(paths.database), true);
 const cfg = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
 assert.equal(cfg.settings_version, 1);
 assert.equal(cfg.audio.transmit_mode, 'PTT');

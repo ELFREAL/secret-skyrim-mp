@@ -19,10 +19,22 @@ const forbiddenPaths = [
   'launcher/node_modules',
   'launcher/dist',
   'launcher/Voice/runtime',
+  'server/vendor/mumble-server',
   'gameData'
 ];
 for (const rel of forbiddenPaths) {
   if (fs.existsSync(path.join(root, rel))) throw new Error(`Generated/private path is present in source tree: ${rel}`);
+}
+
+const requiredServerVoiceFiles = [
+  'scripts/install-mumble-server-runtime.ps1',
+  'server/voice/mumble-server.ini',
+  'server/start-secret-skyrim-server.ps1',
+  'server/START_SECRET_SKYRIM_SERVER.cmd',
+  'THIRD_PARTY/MUMBLE_LICENSE.txt'
+];
+for (const rel of requiredServerVoiceFiles) {
+  if (!fs.existsSync(path.join(root, rel))) throw new Error(`Required bundled voice-server source file is missing: ${rel}`);
 }
 
 const clientSettings = JSON.parse(fs.readFileSync(path.join(root, 'client/skyrim-platform/skymp5-client-settings.txt'), 'utf8'));

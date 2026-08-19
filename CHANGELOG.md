@@ -11,3 +11,9 @@ Initial GitHub repository baseline.
 - Windows CI/release packaging.
 - Pinned SkyMP upstream commit: `2abd0a0391278335face3c13ff0e2cabf76344b0`.
 - Pinned Mumble release: `1.5.915`.
+
+## Unreleased
+
+- Bundled official Mumble Server 1.5.915 into Windows server artifacts.
+- Added one-start server supervisor for Mumble Server + SkyMP RP server.
+- Fixed first-run bundled Mumble client database initialization.
