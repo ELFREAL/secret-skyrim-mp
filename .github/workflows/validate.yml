@@ -19,6 +19,7 @@ jobs:
       - name: Syntax and repository checks
         run: |
           node --check server/runtime/gamemode.js
+          node --check client/skyrim-platform/skymp5-client.js
           node --check client/skyrim-platform/secret-skyrim-voice.js
           node --check launcher/src/main.js
           node --check launcher/src/preload.js

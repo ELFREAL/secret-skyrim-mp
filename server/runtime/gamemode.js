@@ -11,7 +11,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const VERSION = "5.2.0";
+const VERSION = "5.2.1";
 const CONFIG_PATH = path.join(process.cwd(), "gamemode-config.json");
 const UI_PATH = path.join(process.cwd(), "ui", "core-ui.html");
 
@@ -247,9 +247,10 @@ if (typeof mp === "undefined") {
     updateNeighbor: ""
   });
 
-  // Transient voice routing envelope. The standalone SkyrimPlatform voice plugin
-  // reads the last packet from shared sp.storage and forwards it to localhost.
-  // Authoritative routing is RAM-only in voiceRoutes.
+  // Transient voice routing envelope. The stock SkyMP client stores the last
+  // server-authorized route in SkyrimPlatform storage. A server-delivered
+  // event source forwards it to the localhost Mumble bridge. No extra
+  // Data/Platform/Plugins voice JS is required.
   mp.makeProperty("gmVoiceTransport", {
     isVisibleByOwner: true,
     isVisibleByNeighbors: false,
@@ -344,6 +345,205 @@ if (typeof mp === "undefined") {
   `;
 
   mp.makeEventSource("_coreRpUi", eventSource);
+
+  // Voice bridge is delivered by the gamemode itself through SkyMP's stock
+  // GamemodeEventSourceService. This intentionally avoids modifying
+  // skymp5-client.js or adding another SkyrimPlatform plugin, so voice cannot
+  // participate in plugin startup/load-order problems.
+  const voiceEventSource = `
+    try {
+      var generation = String(Date.now()) + ':' + String(Math.random());
+      ctx.sp.storage.secretSkyrimVoiceGeneration = generation;
+
+      var bridgeHost = '127.0.0.1';
+      var bridgePort = 38471;
+      var pttScanCode = 49;
+      var unitsPerMeter = 70;
+      var positionUpdateMs = 100;
+      var routeRefreshMs = 2000;
+      var bridge = new ctx.sp.HttpClient('http://' + bridgeHost + ':' + bridgePort);
+      var gameSettings = ctx.sp.settings && ctx.sp.settings['skymp5-client'];
+      var profileId = Number(gameSettings && gameSettings.gameData && gameSettings.gameData.profileId);
+      var lastStateAt = 0;
+      var lastRouteAt = 0;
+      var lastRouteNonce = null;
+      var lastRouteText = null;
+      var statePending = false;
+      var routePending = false;
+      var pttPressed = false;
+      var bridgeOnline = false;
+      var bridgeWarningShown = false;
+
+      var alive = function() {
+        try {
+          return ctx.sp.storage.secretSkyrimVoiceGeneration === generation;
+        } catch (e) {
+          return false;
+        }
+      };
+
+      var voiceLog = function(text) {
+        try {
+          ctx.sp.writeLogs('SecretSkyrimVoice', String(text));
+        } catch (e) {
+          try { ctx.sp.printConsole(String(text)); } catch (ignore) {}
+        }
+      };
+
+      if (!Number.isSafeInteger(profileId) || profileId < 0) {
+        voiceLog('[VOICE] disabled: invalid skymp5-client gameData.profileId');
+        return;
+      }
+
+      var encodeLines = function(obj) {
+        return Object.keys(obj).map(function(key) {
+          return key + '=' + String(obj[key]).replace(/[\\r\\n]/g, '');
+        }).join('\\n');
+      };
+
+      var onBridgeResult = function(res) {
+        try {
+          var ok = res && Number(res.status) >= 200 && Number(res.status) < 300;
+          if (ok) {
+            if (!bridgeOnline) voiceLog('[VOICE] bridge=OK 127.0.0.1:38471');
+            bridgeOnline = true;
+            bridgeWarningShown = false;
+          } else {
+            bridgeOnline = false;
+            if (!bridgeWarningShown) {
+              bridgeWarningShown = true;
+              voiceLog('[VOICE] bridge HTTP error: ' + (res ? String(res.status) : 'no response'));
+            }
+          }
+        } catch (e) {}
+      };
+
+      var post = function(path, body, done) {
+        if (!alive()) return false;
+        try {
+          bridge.post(path, {
+            body: body,
+            contentType: 'text/plain; charset=utf-8'
+          }, function(res) {
+            onBridgeResult(res);
+            try { if (done) done(res); } catch (e) {}
+          });
+          return true;
+        } catch (e) {
+          bridgeOnline = false;
+          if (!bridgeWarningShown) {
+            bridgeWarningShown = true;
+            voiceLog('[VOICE] bridge exception: ' + String(e && e.message ? e.message : e));
+          }
+          return false;
+        }
+      };
+
+      var sendState = function(now) {
+        if (statePending || now - lastStateAt < positionUpdateMs) return;
+        var player = null;
+        try { player = ctx.sp.Game.getPlayer(); } catch (e) { return; }
+        if (!player) return;
+
+        var x, y, z, heading;
+        try {
+          x = Number(player.getPositionX()) / unitsPerMeter;
+          y = Number(player.getPositionY()) / unitsPerMeter;
+          z = Number(player.getPositionZ()) / unitsPerMeter;
+          heading = Number(player.getAngleZ()) * Math.PI / 180;
+        } catch (e) { return; }
+        if (![x, y, z, heading].every(Number.isFinite)) return;
+
+        statePending = true;
+        lastStateAt = now;
+        var ok = post('/state', encodeLines({
+          profileId: profileId,
+          x: x.toFixed(5),
+          y: z.toFixed(5),
+          z: y.toFixed(5),
+          frontX: Math.sin(heading).toFixed(6),
+          frontY: 0,
+          frontZ: Math.cos(heading).toFixed(6),
+          topX: 0,
+          topY: 1,
+          topZ: 0,
+          context: 'secret-skyrim-mp',
+          ts: Date.now()
+        }), function() { statePending = false; });
+        if (!ok) statePending = false;
+      };
+
+      var sendRoute = function(now) {
+        var route = null;
+        try { route = ctx.sp.storage.secretSkyrimVoiceRoute; } catch (e) { return; }
+        if (!route || !Array.isArray(route.audible)) return;
+        if (Number(route.profileId) !== profileId) return;
+
+        var nonce = Number(route.nonce) || 0;
+        var audible = route.audible
+          .map(Number)
+          .filter(function(id) { return Number.isSafeInteger(id) && id >= 0; })
+          .sort(function(a, b) { return a - b; })
+          .join(',');
+
+        if (routePending) return;
+        if (nonce === lastRouteNonce && now - lastRouteAt < routeRefreshMs) return;
+        lastRouteNonce = nonce;
+        lastRouteAt = now;
+        if (audible !== lastRouteText) {
+          lastRouteText = audible;
+          voiceLog('[VOICE] route audible=[' + audible + ']');
+        }
+
+        routePending = true;
+        var ok = post('/route', encodeLines({
+          profileId: profileId,
+          nonce: nonce,
+          audible: audible,
+          ts: Date.now()
+        }), function() { routePending = false; });
+        if (!ok) routePending = false;
+      };
+
+      var sendPtt = function(pressed) {
+        pressed = !!pressed;
+        if (pttPressed === pressed) return;
+        pttPressed = pressed;
+        voiceLog('[VOICE] PTT ' + (pressed ? 'DOWN' : 'UP'));
+        post('/ptt', encodeLines({ pressed: pressed ? 1 : 0, ts: Date.now() }));
+      };
+
+      ctx.sp.on('buttonEvent', function(e) {
+        if (!alive()) return;
+        try {
+          if (!e || Number(e.code) !== pttScanCode) return;
+          if (e.device !== undefined && Number(e.device) !== 0) return;
+          if (e.isDown && !e.isRepeating) sendPtt(true);
+          if (e.isUp) sendPtt(false);
+        } catch (err) {}
+      });
+
+      ctx.sp.on('update', function() {
+        if (!alive()) return;
+        try {
+          var now = Date.now();
+          sendState(now);
+          sendRoute(now);
+          if (pttPressed && ctx.sp.mpClientPlugin && !ctx.sp.mpClientPlugin.isConnected()) {
+            sendPtt(false);
+          }
+        } catch (err) {}
+      });
+
+      voiceLog('[VOICE] gamemode event source installed; PTT=N; profileId=' + profileId);
+    } catch (e) {
+      try {
+        ctx.sp.writeLogs('SecretSkyrimVoice', '[VOICE] event source init failed: ' + String(e && e.message ? e.message : e));
+      } catch (ignore) {}
+    }
+  `;
+
+  mp.makeEventSource("_coreVoice", voiceEventSource);
 
   function getProp(actorId, p, fallback) {
     const v = safe(`get ${p} ${actorHex(actorId)}`, () => mp.get(actorId, p), fallback);

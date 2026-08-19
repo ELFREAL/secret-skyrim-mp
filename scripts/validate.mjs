@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const root = path.resolve(import.meta.dirname, '..');
 const jsonFiles = [
@@ -35,6 +36,20 @@ const requiredServerVoiceFiles = [
 ];
 for (const rel of requiredServerVoiceFiles) {
   if (!fs.existsSync(path.join(root, rel))) throw new Error(`Required bundled voice-server source file is missing: ${rel}`);
+}
+
+// Stock SkyMP client bundle is deliberately pinned and not modified by our gameplay code.
+// All Secret Skyrim MP gameplay additions are delivered from the server via event sources/properties.
+const stockClientPath = path.join(root, 'client/skyrim-platform/skymp5-client.js');
+if (!fs.existsSync(stockClientPath)) throw new Error('Pinned stock skymp5-client.js is missing.');
+const stockClient = fs.readFileSync(stockClientPath);
+if (stockClient.length < 1_000_000) {
+  throw new Error(`Pinned stock skymp5-client.js is unexpectedly small (${stockClient.length} bytes).`);
+}
+const expectedStockClientSha256 = '57e9b912d7095966eb808a9ad139bb526afd42428f898fa3c05c8ba437067080';
+const actualStockClientSha256 = crypto.createHash('sha256').update(stockClient).digest('hex');
+if (actualStockClientSha256 !== expectedStockClientSha256) {
+  throw new Error(`Pinned stock skymp5-client.js SHA-256 mismatch: ${actualStockClientSha256}`);
 }
 
 const clientSettings = JSON.parse(fs.readFileSync(path.join(root, 'client/skyrim-platform/skymp5-client-settings.txt'), 'utf8'));

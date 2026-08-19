@@ -24,6 +24,7 @@ jobs:
         shell: powershell
         run: |
           node --check server/runtime/gamemode.js
+          node --check client/skyrim-platform/skymp5-client.js
           node --check client/skyrim-platform/secret-skyrim-voice.js
           node scripts/validate.mjs
           Push-Location launcher
